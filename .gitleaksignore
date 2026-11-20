@@ -1,0 +1,10 @@
+# Gitleaks findings reviewed and accepted. One fingerprint per line.
+# Each entry records why it is safe to ignore.
+
+# Example JWT inside a sample HTTP request in the XSS training exercise.
+# Documentation sample, not a live credential.
+3a457b7afb6fb841d2e1f90cf4b4248afdb601bc:exercises/02-xss.md:jwt:65
+
+# Hardcoded app.secret in this deliberately vulnerable training app (initial commit).
+# Accepted for training purposes / externalised to APP_SECRET in a later commit.
+3a457b7afb6fb841d2e1f90cf4b4248afdb601bc:src/main/resources/application.properties:generic-api-key:1
