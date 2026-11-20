@@ -1,0 +1,115 @@
+name: DevSecOps Pipeline (Secrets, SAST, SCA, DAST)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------- Stage 0: Secret scanning with Gitleaks ----------
+  secrets:
+    name: Secrets - Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # scan the full commit history, not just the latest files
+
+      - name: Scan for leaked secrets
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks:latest git /repo --redact --verbose
+
+  # ---------- Stage 1: SAST with SonarCloud ----------
+  sast:
+    name: SAST - SonarCloud
+    runs-on: ubuntu-latest
+    needs: secrets
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: bytedawgdevops
+      SONAR_PROJECT_KEY: bytedawgdevops   # must match Project key under Information in SonarQube Cloud
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history gives SonarCloud better analysis
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build and run SonarCloud analysis
+        run: >
+          mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+          -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.organization=$SONAR_ORGANIZATION
+          -Dsonar.projectKey=$SONAR_PROJECT_KEY
+          -Dsonar.qualitygate.wait=true
+
+  # ---------- Stage 2: SCA with Snyk ----------
+  sca:
+    name: SCA - Snyk
+    runs-on: ubuntu-latest
+    needs: sast
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Run Snyk dependency scan
+        run: mvn -B snyk:test -fn   # -fn = report findings but don't fail the build (for now)
+
+  # ---------- Stage 3: DAST with OWASP ZAP ----------
+  dast:
+    name: DAST - OWASP ZAP
+    runs-on: ubuntu-latest
+    needs: sca
+    timeout-minutes: 45
+    # OWASP Juice Shop: a deliberately vulnerable practice app, started inside
+    # the GitHub runner just for this job. ZAP scans it on localhost, so no
+    # real website is touched.
+    services:
+      juiceshop:
+        image: bkimminich/juice-shop
+        ports:
+          - 3000:3000
+    env:
+      TARGET_URL: http://localhost:3000
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Wait for Juice Shop to start
+        run: |
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null "$TARGET_URL"; then echo "Juice Shop is up"; exit 0; fi
+            echo "Waiting... ($i)"; sleep 5
+          done
+          echo "Juice Shop did not start in time"; exit 1
+
+      - name: Download ZAP
+        run: |
+          wget -q https://github.com/zaproxy/zaproxy/releases/download/v2.16.0/ZAP_2.16.0_Linux.tar.gz
+          tar -xzf ZAP_2.16.0_Linux.tar.gz
+
+      - name: Run ZAP quick scan
+        working-directory: ZAP_2.16.0
+        run: ./zap.sh -cmd -quickurl "$TARGET_URL" -quickprogress -quickout "$GITHUB_WORKSPACE/zap_report.html"
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: zap_report.html
