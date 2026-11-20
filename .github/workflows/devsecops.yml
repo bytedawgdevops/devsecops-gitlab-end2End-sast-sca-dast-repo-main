@@ -29,7 +29,7 @@ jobs:
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_ORGANIZATION: bytedawgdevops
-      SONAR_PROJECT_KEY: bytedawgdevops   # must match Project key under Information in SonarQube Cloud
+      SONAR_PROJECT_KEY: bytedawgdevops_devsecops-gitlab-end2End-sast-sca-dast-repo-main   # must match Project key under Information in SonarQube Cloud
     steps:
       - uses: actions/checkout@v4
         with:
